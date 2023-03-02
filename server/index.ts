@@ -1,6 +1,10 @@
-import * as http from "http";
-import * as fs from "fs";
-import * as path from "path";
+import http from "http";
+import fs from "fs";
+import {
+  getContentType,
+  getFileSize,
+  ContentInformation,
+} from "./contentMethods";
 
 const server = http.createServer(
   (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -12,81 +16,44 @@ const server = http.createServer(
 
       if (stat.isDirectory()) {
         res.statusCode = 403;
-        res.end("Forbidden");
-        logRequest(req, res);
+        res.end("Access Forbidden");
+        logRequest(req, res, new Error("Access Forbidden"));
       } else {
         const fileStream = fs.createReadStream(filePath);
-        const contentType = getContentType(filePath);
-        const contentLength = stat.size.toString();
-        const contentSize = getFileSize(stat.size);
 
-        logRequest(req, res, contentLength, contentSize, contentType);
+        const length = stat.size.toString();
+        const size = getFileSize(stat.size);
+        const type = getContentType(filePath);
 
-        res.setHeader("Content-Type", contentType);
-        res.setHeader("Content-Length", contentLength);
-        res.setHeader("Content-File-Size", contentSize);
+        logRequest(req, res, { length, size, type });
+
+        res.setHeader("Content-Type", type);
+        res.setHeader("Content-Length", length);
         fileStream.pipe(res);
       }
     } else {
       res.statusCode = 404;
       res.end("File not found");
 
-      logRequest(req, res);
+      logRequest(req, res, new Error("File not found"));
     }
   }
 );
 
-const getContentType = (filePath: string): string => {
-  const extname = path.extname(filePath);
-  switch (extname) {
-    case ".html":
-      return "text/html";
-    case ".js":
-      return "text/javascript";
-    case ".css":
-      return "text/css";
-    case ".json":
-      return "application/json";
-    case ".png":
-      return "image/png";
-    case ".jpg":
-      return "image/jpg";
-    case ".wav":
-      return "audio/wav";
-    default:
-      return "application/octet-stream";
-  }
-};
-
-const getFileSize = (bytes: number): string => {
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-  if (bytes == 0) {
-    return "0 Byte";
-  }
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + " " + sizes[i];
-};
-
 const logRequest = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  contentLength?: string,
-  contentSize?: string,
-  contentType?: string
+  content: ContentInformation | Error
 ) => {
-  let logMessage = `Request: ${req.method} Status code: ${res.statusCode} URL: ${req.url}`;
+  let logMessage: string;
+  logMessage = `** ${new Date().toISOString()}\n`;
+  logMessage += `-- Request : ${req.method} || Status : ${res.statusCode} || URL : "${req.url}"\n`;
 
-  if (!contentLength || !contentSize || !contentType) {
-    if (res.statusCode === 403) {
-      logMessage += `\nForbidden Access\n`;
-    } else if (res.statusCode === 404) {
-      logMessage += `\nFile not Found\n`;
-    }
-  } else {
-    logMessage += `\nType: ${contentType} - Length: ${contentLength}bytes - Size: ${contentSize}\n`;
+  if (content instanceof Error) {
+    logMessage += `!! ERROR - ${content.message}\n`;
+  } else if (content instanceof Object) {
+    logMessage += `~~ Type - ${content.type} :: Length - ${content.length}B :: Size - ${content.size}\n`;
   }
-
-  logMessage += `Time: ${new Date().toISOString()}\n`;
 
   fs.appendFile("log.txt", logMessage + "\n", (err) => {
     if (err) {
