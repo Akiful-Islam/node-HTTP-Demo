@@ -1,66 +1,65 @@
 import http from "http";
 import fs from "fs";
-import {
-  getContentType,
-  getFileSize,
-  ContentInformation,
-} from "./contentMethods";
+import { getContentType, getFileSize } from "./headerMethods";
+import logRequest from "./logRequest";
 
 const server = http.createServer(
   (req: http.IncomingMessage, res: http.ServerResponse) => {
     const filePath = "../public" + req.url;
-    const fileExists = fs.existsSync(filePath);
-
-    if (fileExists) {
+    try {
       const stat = fs.statSync(filePath);
 
-      if (stat.isDirectory()) {
+      if (stat.isDirectory()) throw new Error("URL is a directory");
+
+      fs.accessSync(filePath, fs.constants.R_OK);
+
+      const fileStream = fs.createReadStream(filePath);
+
+      const length = stat.size.toString();
+      const size = getFileSize(stat.size);
+      const type = getContentType(filePath);
+
+      logRequest(req, res, { length, size, type });
+
+      res.setHeader("Content-Type", type);
+      res.setHeader("Content-Length", length);
+
+      fileStream.pipe(res);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+
+      if (err.code === "ENOENT") {
+        const error = new Error("File not found");
+
+        res.statusCode = 404;
+        res.end(error.message);
+
+        logRequest(req, res, error);
+      } else if (err.message === "URL is a directory") {
+        const error = new Error("Bad Request. File is a directory.");
+
+        res.statusCode = 400;
+        res.end(error.message);
+
+        logRequest(req, res, error);
+      } else if (err.code === "EACCES") {
+        const error = new Error("Forbidden. File Access denied.");
+
         res.statusCode = 403;
-        res.end("Access Forbidden");
-        logRequest(req, res, new Error("Access Forbidden"));
+        res.end(error.message);
+
+        logRequest(req, res, error);
       } else {
-        const fileStream = fs.createReadStream(filePath);
+        const error = new Error("Internal server error");
 
-        const length = stat.size.toString();
-        const size = getFileSize(stat.size);
-        const type = getContentType(filePath);
+        res.statusCode = 500;
+        res.end(error.message);
 
-        logRequest(req, res, { length, size, type });
-
-        res.setHeader("Content-Type", type);
-        res.setHeader("Content-Length", length);
-        fileStream.pipe(res);
+        logRequest(req, res, error);
       }
-    } else {
-      res.statusCode = 404;
-      res.end("File not found");
-
-      logRequest(req, res, new Error("File not found"));
     }
   }
 );
-
-const logRequest = (
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  content: ContentInformation | Error
-) => {
-  let logMessage: string;
-  logMessage = `** ${new Date().toISOString()}\n`;
-  logMessage += `-- Request : ${req.method} || Status : ${res.statusCode} || URL : "${req.url}"\n`;
-
-  if (content instanceof Error) {
-    logMessage += `!! ERROR - ${content.message}\n`;
-  } else if (content instanceof Object) {
-    logMessage += `~~ Type - ${content.type} :: Length - ${content.length}B :: Size - ${content.size}\n`;
-  }
-
-  fs.appendFile("log.txt", logMessage + "\n", (err) => {
-    if (err) {
-      console.error(`Error writing to log file: ${err.message}`);
-    }
-  });
-};
 
 server.listen(3000, () => {
   console.log("Server running on port 3000");
